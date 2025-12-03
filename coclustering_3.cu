@@ -25,6 +25,14 @@
 #include <cmath>
 #include <stdint.h>
 
+// ---- forward declarations (needed in CUDA) ----
+extern "C" __global__ void compute_row_norms_kernel(const float*, int, int, float*);
+extern "C" __global__ void compute_centroid_norms_kernel(const float*, int, int, int, float*);
+extern "C" __global__ void fill_zero_float_kernel(float*, int);
+extern "C" __global__ void fill_zero_int_kernel(int*, int);
+
+
+
 #define CHECK_CUDA(call) do { \
     cudaError_t _e = (call); \
     if (_e != cudaSuccess) { \
@@ -62,19 +70,6 @@ __global__ static void compute_col_norms_kernel(const float* __restrict__ X, int
         s += v * v;
     }
     norms[j] = s;
-}
-
-// compute squared norms of rows (vectors) when data is n_points x dim (column-major). Output length n_points.
-__global__ static void compute_row_norms_kernel(const float* __restrict__ X, int n_points, int dim, float* __restrict__ norms) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n_points) return;
-    float s = 0.0f;
-    // iterate columns
-    for (int j = 0; j < dim; ++j) {
-        float v = X[(size_t)j * n_points + i];
-        s += v * v;
-    }
-    norms[i] = s;
 }
 
 // After computing cross = X * C^T (size n_points x k) stored column-major, compute distances and argmin per row
@@ -182,7 +177,6 @@ int kmeans_pp_init(int n_points, int dim, const float* d_X, int k, float* d_cent
         // We'll compute by launching kernel over cur
         int gcn = (cur + tp - 1) / tp;
         // compute c_norms via simple kernel
-        extern __global__ void compute_centroid_norms_kernel(const float* centroids, int k, int dim, int cur_k, float* cnorms);
         compute_centroid_norms_kernel<<<gcn, tp>>>(d_centroids, k, dim, cur, d_cnorms);
         CHECK_CUDA(cudaGetLastError());
 
@@ -278,7 +272,7 @@ extern "C" int kmeans_fit(int n_points, int dim, const float* d_X, int k, int ma
         // compute centroid norms
         int gk = (k + tp - 1) / tp;
         // compute norms via kernel
-        extern __global__ void compute_centroid_norms_kernel(const float* centroids, int k, int dim, int cur_k, float* cnorms);
+        // extern __global__ void compute_centroid_norms_kernel(const float* centroids, int k, int dim, int cur_k, float* cnorms);
         compute_centroid_norms_kernel<<<gk, tp>>>(d_centroids, k, dim, k, d_cnorms);
         CHECK_CUDA(cudaGetLastError());
 
@@ -289,9 +283,9 @@ extern "C" int kmeans_fit(int n_points, int dim, const float* d_X, int k, int ma
 
         // reset centroid_sums and counts
         int gsum = (k * dim + tp - 1) / tp;
-        fill_zero<<<gsum, tp>>>(d_centroid_sums, k * dim);
+        fill_zero_float_kernel<<<gsum, tp>>>(d_centroid_sums, k * dim);
         CHECK_CUDA(cudaGetLastError());
-        fill_zero<<<(k + tp -1)/tp, tp>>>((float*)d_counts, k);
+        fill_zero_int_kernel<<<(k + tp -1)/tp, tp>>>(d_counts, k); 
         CHECK_CUDA(cudaGetLastError());
 
         // update centroids (atomic)
@@ -338,16 +332,7 @@ __global__ void compute_cross_direct_kernel(int n_points, int dim, int cur_k, co
     cross[(size_t)j * n_points + i] = s;
 }
 
-__global__ void compute_centroid_norms_kernel(const float* centroids, int k, int dim, int cur_k, float* cnorms) {
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
-    if (j >= cur_k) return;
-    float s = 0.0f;
-    for (int d = 0; d < dim; ++d) {
-        float v = centroids[(size_t)d * k + j];
-        s += v * v;
-    }
-    cnorms[j] = s;
-}
+
 
 __global__ void update_min_dists_kernel(const float* cross, const float* xnorms, const float* cnorms, int n_points, int cur_k, int ld_cross, float* min_dists) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -367,8 +352,3 @@ __global__ void copy_point_to_centroid_offset_kernel(const float* X, int n_point
     centroids[(size_t)d * k + offset] = X[(size_t)d * n_points + point_idx];
 }
 
-// utility zero fill for int arrays
-__global__ void fill_zero_int(int* x, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) x[i] = 0;
-}

@@ -1,0 +1,28 @@
+==============================================
+   Spectral Co-clustering Benchmark Script
+==============================================
+
+[CPU] Running sklearn SpectralCoclustering ...
+[CPU] runtime = 1.84 sec
+
+[GPU] Running CUDA coclustering executable ...
+[GPU] runtime = 0.27 sec
+
+[RESULT] speedup = 6.814814814814815x faster
+
+[INFO] saved results to results/benchmark_facebookG.json
+Done.
+==============================================
+   Spectral Co-clustering Benchmark Script
+==============================================
+
+[CPU] Running sklearn SpectralCoclustering ...
+[CPU] runtime = 58.32 sec
+
+[GPU] Running CUDA coclustering executable ...
+[GPU] runtime = 0.39 sec
+
+[RESULT] speedup = 149.53846153846155x faster
+
+[INFO] saved results to results/benchmark_Syn200G.json
+Done.

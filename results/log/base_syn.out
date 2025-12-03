@@ -1,0 +1,6 @@
+[INFO] Loading data from Syn200G.txt...
+[INFO] Data loaded. Shape = (773388, 2)
+[INFO] Running Spectral Co-clustering (CPU baseline)...
+[INFO] Done. Runtime = 57.1986 sec
+[INFO] Results saved to results/Syn200G_spectral_results.json
+[INFO] Test completed successfully!

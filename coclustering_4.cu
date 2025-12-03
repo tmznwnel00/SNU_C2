@@ -21,6 +21,14 @@
 #include <cstdlib>
 #include <cmath>
 
+// ---- forward declarations (needed in CUDA) ----
+extern "C" __global__ void compute_row_norms_kernel(const float*, int, int, float*);
+extern "C" __global__ void compute_centroid_norms_kernel(const float*, int, int, int, float*);
+extern "C" __global__ void fill_zero_float_kernel(float*, int);
+extern "C" __global__ void fill_zero_int_kernel(int*, int);
+
+
+
 #define CHECK_CUDA(call) do { \
     cudaError_t _e = (call); \
     if (_e != cudaSuccess) { \
@@ -29,10 +37,19 @@
     } \
 } while(0)
 
+#define CHECK_CUBLAS(call) do { \
+    cublasStatus_t _s = (call); \
+    if (_s != CUBLAS_STATUS_SUCCESS) { \
+        fprintf(stderr, "cuBLAS Error %s:%d: %d\n", __FILE__, __LINE__, (int)_s); \
+        exit(EXIT_FAILURE); \
+    } \
+} while(0)
+
+
 // ------------------ Single-pass normalization (CSR & COO) ------------------
 
 // CSR single-pass: thread per row, iterate nonzeros in that row and apply vals[idx] /= sqrt(dr[row] * dc[col])
-__global__ static void normalize_csr_single_pass_kernel(int m, const int* __restrict__ rowPtr, const int* __restrict__ colIdx, float* __restrict__ vals, const float* __restrict__ dr, const float* __restrict__ dc) {
+__global__ void normalize_csr_single_pass_kernel(int m, const int* __restrict__ rowPtr, const int* __restrict__ colIdx, float* __restrict__ vals, const float* __restrict__ dr, const float* __restrict__ dc) {
     int r = blockIdx.x * blockDim.x + threadIdx.x;
     if (r >= m) return;
     float drv = dr[r];
@@ -47,7 +64,7 @@ __global__ static void normalize_csr_single_pass_kernel(int m, const int* __rest
 }
 
 // COO single-pass: thread per nonzero
-__global__ static void normalize_coo_single_pass_kernel(int nnz, float* __restrict__ vals, const int* __restrict__ rowIdx, const int* __restrict__ colIdx, const float* __restrict__ dr, const float* __restrict__ dc) {
+__global__ void normalize_coo_single_pass_kernel(int nnz, float* __restrict__ vals, const int* __restrict__ rowIdx, const int* __restrict__ colIdx, const float* __restrict__ dr, const float* __restrict__ dc) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= nnz) return;
     int r = rowIdx[i];
@@ -75,7 +92,7 @@ extern "C" void normalize_coo_single_pass(int nnz, float* d_vals, const int* d_r
 
 // assign_from_cross: given cross = X * C^T stored column-major (ld = n_points)
 // compute label per-point and optionally output squared distance
-__global__ static void assign_from_cross_kernel(int n_points, int k, const float* __restrict__ cross, int ld_cross, const float* __restrict__ xnorms, const float* __restrict__ cnorms, int* __restrict__ labels, float* __restrict__ out_dist2) {
+__global__  void assign_from_cross_kernel(int n_points, int k, const float* __restrict__ cross, int ld_cross, const float* __restrict__ xnorms, const float* __restrict__ cnorms, int* __restrict__ labels, float* __restrict__ out_dist2) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_points) return;
     float best = INFINITY;
@@ -93,7 +110,7 @@ __global__ static void assign_from_cross_kernel(int n_points, int k, const float
 // Each block processes a tile of points. It accumulates per-centroid partial sums in shared memory
 // and then one thread atomically adds the per-centroid partial sums to the global centroid accumulator.
 // NOTE: This requires k * dim to be small enough to fit in shared memory. If not, caller should fall back to atomic-per-point.
-__global__ static void partial_block_update_kernel(const float* __restrict__ X, int n_points, int dim, const int* __restrict__ labels, int k, float* __restrict__ centroid_sums, int ld_cs, int* __restrict__ counts) {
+__global__  void partial_block_update_kernel(const float* __restrict__ X, int n_points, int dim, const int* __restrict__ labels, int k, float* __restrict__ centroid_sums, int ld_cs, int* __restrict__ counts) {
     extern __shared__ float sdata[]; // dynamic shared memory
     // layout: first (k*dim) floats for sums, then k ints (as floats) for counts
     float* s_sums = sdata; // size k * dim
@@ -140,7 +157,7 @@ __global__ static void partial_block_update_kernel(const float* __restrict__ X, 
 }
 
 // Fallback atomic-per-point update when shared-memory per-block approach is not feasible
-__global__ static void update_centroids_atomic_kernel(const float* __restrict__ X, int n_points, int dim, const int* __restrict__ labels, int k, float* __restrict__ centroid_sums, int ld_cs, int* __restrict__ counts) {
+__global__  void update_centroids_atomic_kernel(const float* __restrict__ X, int n_points, int dim, const int* __restrict__ labels, int k, float* __restrict__ centroid_sums, int ld_cs, int* __restrict__ counts) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n_points) return;
     int lab = labels[i];
@@ -152,7 +169,7 @@ __global__ static void update_centroids_atomic_kernel(const float* __restrict__ 
 }
 
 // finalize centroids dividing sums by counts
-__global__ static void finalize_centroids_kernel(float* __restrict__ centroid_sums, int k, int dim, const int* __restrict__ counts) {
+__global__  void finalize_centroids_kernel(float* __restrict__ centroid_sums, int k, int dim, const int* __restrict__ counts) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = k * dim;
     if (idx >= total) return;
@@ -196,13 +213,12 @@ extern "C" int kmeans_fit_pipeline(int n_points, int dim, const float* d_X, // d
     // reuse small kernel implementation from earlier files: compute row norms by summing over columns
     // implement inline simple kernel here
     // (Note: for large n/dim consider using cublas gemv or more optimized kernel)
-    {
-        // kernel
-        auto compute_row_norms = [] __device__ (const float* X, int n_points, int dim, float* norms) {};
-    }
+    // {
+    //     // kernel
+    //     auto compute_row_norms = [] __device__ (const float* X, int n_points, int dim, float* norms) {};
+    // }
 
     // We'll implement compute_row_norms on host using a simple kernel declared below
-    extern __global__ void compute_row_norms_kernel(const float* X, int n_points, int dim, float* norms);
     compute_row_norms_kernel<<<gx, tpb>>>(d_X, n_points, dim, d_xnorms);
     CHECK_CUDA(cudaGetLastError());
 
@@ -215,7 +231,6 @@ extern "C" int kmeans_fit_pipeline(int n_points, int dim, const float* d_X, // d
 
         // compute centroid norms
         int gk = (k + tpb - 1) / tpb;
-        extern __global__ void compute_centroid_norms_kernel(const float* centroids, int k, int dim, int cur_k, float* cnorms);
         compute_centroid_norms_kernel<<<gk, tpb>>>(d_centroids, k, dim, k, d_cnorms);
         CHECK_CUDA(cudaGetLastError());
 
@@ -228,12 +243,10 @@ extern "C" int kmeans_fit_pipeline(int n_points, int dim, const float* d_X, // d
         int total = k * dim;
         int gfill = (total + tpb - 1) / tpb;
         // zero floats
-        auto fill_zero_f = [] __device__ (float* x, int n) {};
-        extern __global__ void fill_zero_float_kernel(float* x, int n);
+        // auto fill_zero_f = [] __device__ (float* x, int n) {};
         fill_zero_float_kernel<<<gfill, tpb>>>(d_centroid_sums, total);
         CHECK_CUDA(cudaGetLastError());
         // zero ints
-        extern __global__ void fill_zero_int_kernel(int* x, int n);
         fill_zero_int_kernel<<<(k + tpb - 1)/tpb, tpb>>>(d_counts, k);
         CHECK_CUDA(cudaGetLastError());
 
@@ -281,37 +294,4 @@ extern "C" int kmeans_fit_pipeline(int n_points, int dim, const float* d_X, // d
     CHECK_CUBLAS(cublasDestroy(blas));
 
     return 0;
-}
-
-// ------------------ small helper kernels declared/defined ------------------
-__global__ void compute_row_norms_kernel(const float* X, int n_points, int dim, float* norms) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n_points) return;
-    float s = 0.0f;
-    for (int d = 0; d < dim; ++d) {
-        float v = X[(size_t)d * n_points + i];
-        s += v * v;
-    }
-    norms[i] = s;
-}
-
-__global__ void compute_centroid_norms_kernel(const float* centroids, int k, int dim, int cur_k, float* cnorms) {
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
-    if (j >= cur_k) return;
-    float s = 0.0f;
-    for (int d = 0; d < dim; ++d) {
-        float v = centroids[(size_t)d * k + j];
-        s += v * v;
-    }
-    cnorms[j] = s;
-}
-
-__global__ void fill_zero_float_kernel(float* x, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) x[i] = 0.0f;
-}
-
-__global__ void fill_zero_int_kernel(int* x, int n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) x[i] = 0;
 }

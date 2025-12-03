@@ -102,12 +102,12 @@ void compute_degrees_csr(int m, int n, int nnz, const int* d_rowPtr, const int* 
     float alpha = 1.0f, beta = 0.0f;
     CHECK_CUSPARSE(cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                            &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
-                                           CUSPARSE_MV_ALG_DEFAULT, &bufferSize));
+                                           CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize));
     CHECK_CUDA(cudaMalloc(&dBuffer, bufferSize));
 
     CHECK_CUSPARSE(cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                 &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
-                                CUSPARSE_MV_ALG_DEFAULT, dBuffer));
+                                CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
 
     // Compute d_c = A^T * 1 (size n) -> reuse ones vector of size m for right-hand side
     // Need ones vector of length m
@@ -127,7 +127,7 @@ void compute_degrees_csr(int m, int n, int nnz, const int* d_rowPtr, const int* 
     size_t bufferSize2 = 0;
     CHECK_CUSPARSE(cusparseSpMV_bufferSize(handle, CUSPARSE_OPERATION_TRANSPOSE,
                                            &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
-                                           CUSPARSE_MV_ALG_DEFAULT, &bufferSize2));
+                                           CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize2));
     if (bufferSize2 > bufferSize) {
         CHECK_CUDA(cudaFree(dBuffer));
         CHECK_CUDA(cudaMalloc(&dBuffer, bufferSize2));
@@ -135,7 +135,7 @@ void compute_degrees_csr(int m, int n, int nnz, const int* d_rowPtr, const int* 
 
     CHECK_CUSPARSE(cusparseSpMV(handle, CUSPARSE_OPERATION_TRANSPOSE,
                                 &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
-                                CUSPARSE_MV_ALG_DEFAULT, dBuffer));
+                                CUSPARSE_SPMV_ALG_DEFAULT, dBuffer));
 
     // cleanup
     CHECK_CUDA(cudaFree(dBuffer));

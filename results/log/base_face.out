@@ -1,0 +1,6 @@
+[INFO] Loading data from facebookG.txt...
+[INFO] Data loaded. Shape = (176468, 2)
+[INFO] Running Spectral Co-clustering (CPU baseline)...
+[INFO] Done. Runtime = 1.3299 sec
+[INFO] Results saved to results/facebookG_spectral_results.json
+[INFO] Test completed successfully!
